@@ -1,0 +1,34 @@
+<?php
+
+/**
+ * @file
+ * The installation implementation for the field widget SQL storage module.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function field_widget_sql_storage_schema() {
+  $schema['field_widget_storage'] = array(
+    'description' => 'Store the modules that are using field widget SQL storage.',
+    'fields' => array(
+      'name' => array(
+        'description' => 'The schema name.',
+        'type' => 'varchar',
+        'length' => '128',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'module' => array(
+        'description' => 'The module name.',
+        'type' => 'varchar',
+        'length' => '128',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('name', 'module'),
+  );
+
+  return $schema;
+}

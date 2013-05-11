@@ -1,0 +1,6 @@
+name = Field widget SQL storage
+description = Stores data for field widgets along side the corresponding field.
+core = 7.x
+package = Fields
+files[] = handlers/entity.inc
+files[] = handlers/storage.inc

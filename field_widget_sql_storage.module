@@ -1,0 +1,437 @@
+<?php
+
+/**
+ * @file
+ * The core implementation for the field widget SQL storage module.
+ */
+
+define('FIELD_WIDGET_SQL_STORAGE_UPDATE', 'update');
+define('FIELD_WIDGET_SQL_STORAGE_INSERT', 'insert');
+
+/**
+ * Implements hook_schema_alter().
+ */
+function field_widget_sql_storage_schema_alter(&$schema) {
+  field_widget_sql_storage_clear_cache();
+
+  foreach ($schema as $name => $info) {
+    if (isset($info['field_widget_storage']) && $info['field_widget_storage']) {
+      $records = array(
+        'name' => $info['name'],
+        'module' => $info['module'],
+      );
+      field_widget_sql_storage_save('field_widget_storage', $records);
+    }
+  }
+}
+
+/**
+ * Implements hook_modules_uninstalled().
+ */
+function field_widget_sql_storage_modules_uninstalled($modules) {
+  $database = field_widget_sql_storage_database('field_widget_storage', array());
+
+  foreach ($modules as $module) {
+    $conditions = array('module' => $module);
+
+    // If the field widget storage has data for the module being uninstalled.
+    if ($database->hasData($conditions)) {
+      $database->delete();
+
+      // Clear the widget SQL storage cache.
+      field_widget_sql_storage_clear_cache();
+    }
+  }
+}
+
+/**
+ * Implements hook_field_attach_insert().
+ */
+function field_widget_sql_storage_field_attach_insert($entity_type, $entity) {
+  _field_widget_sql_storage_save($entity_type, $entity, FIELD_WIDGET_SQL_STORAGE_INSERT);
+}
+
+/**
+ * Implements hook_field_attach_update().
+ */
+function field_widget_sql_storage_field_attach_update($entity_type, $entity) {
+  _field_widget_sql_storage_save($entity_type, $entity, FIELD_WIDGET_SQL_STORAGE_UPDATE);
+}
+
+/**
+ * Implements hook_field_attach_purge().
+ */
+function field_widget_sql_storage_field_attach_purge($entity_type, $entity, $field, $instance) {
+  // This is when the field instance has been deleted.
+  $widget = $instance['widget'];
+
+  if (!isset($widget['module'])) {
+    return;
+  }
+  $records = array(
+    'entity_type' => $entity_type,
+    'bundle'      => $instance['bundle'],
+    'field_name'  => $instance['field_name'],
+  );
+  $schema = field_widget_sql_storage_get_widget_schema_by_module($widget['module']);
+
+  field_widget_sql_storage_delete($schema['name'], $records);
+}
+
+/**
+ * Implements hook_field_attach_load().
+ */
+function field_widget_sql_storage_field_attach_load($entity_type, $entities, $age, $options) {
+  $default_schema = field_widget_sql_storage_widget_schema_info();
+
+  foreach ($entities as $entity_id => &$entity) {
+    $entity_info = field_widget_sql_storage_entity($entity, $entity_type);
+
+    $bundle      = $entity_info->getBundle();
+    $revision_id = $entity_info->getRevisionId();
+
+    // Iterate through the fields that widget storage is accountable for.
+    foreach ($entity_info->getFieldsWidgetStorage() as $field_name => $info) {
+
+      // Define the records that we want to return back.
+      $records = array_diff(array_keys($info['fields']), array_keys($default_schema['fields'])) + array('delta');
+
+      $conditions = array(
+        'entity_id'   => $entity_id,
+        'revision_id' => $revision_id,
+        'entity_type' => $entity_type,
+        'bundle'      => $bundle,
+        'field_name'  => $field_name,
+      );
+      // Retrieve the widget storage items keyed by their delta value.
+      $items = field_widget_sql_storage_retrieve_all($info['name'], $records, $conditions, 'delta');
+
+      if (empty($items)) {
+        continue;
+      }
+      $language = field_language($entity_type, $entity, $field_name);
+
+      // Attach the widget storage item values to the entity.
+      foreach ($items as $delta => $item) {
+        if (!isset($entity->{$field_name}[$language][$delta])) {
+          continue;
+        }
+        unset($item['delta']);
+        $entity->{$field_name}[$language][$delta] += $item;
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_field_attach_delete().
+ */
+function field_widget_sql_storage_field_attach_delete($entity_type, $entity) {
+  // This is when the individual entity is deleted.
+  $entity_info = field_widget_sql_storage_entity($entity, $entity_type);
+
+  $records = array(
+    'entity_id'   => $entity_info->getEntityId(),
+    'revision_id' => $entity_info->getRevisionId(),
+    'entity_type' => $entity_info->getEntityType(),
+    'bundle'      => $entity_info->getBundle(),
+  );
+
+  // Delete any of the records that were saved for this entity using field
+  // widget storage.
+  foreach ($entity_info->getFieldsWidgetStorage() as $field_name => $info) {
+    $records['field_name'] = $field_name;
+    field_widget_sql_storage_delete($info['name'], $records);
+  }
+}
+
+/**
+ * Save or update the field widget storage records.
+ *
+ * @param $entity_type
+ *   The type of entity we are dealing with.
+ * @param $entity
+ *   A entity object.
+ * @param $op
+ *   The operation that is being performed on the storage records.
+ */
+function _field_widget_sql_storage_save($entity_type, $entity, $op) {
+  $entity_info = field_widget_sql_storage_entity($entity, $entity_type);
+
+  $bundle      = $entity_info->getBundle();
+  $entity_id   = $entity_info->getEntityId();
+  $revision_id = $entity_info->getRevisionId();
+
+  // Iterate through the fields that widget storage is accountable for.
+  foreach ($entity_info->getFieldsWidgetStorage() as $field_name => $info) {
+    $records = array(
+      'entity_id'   => $entity_id,
+      'revision_id' => $revision_id,
+      'entity_type' => $entity_type,
+      'bundle'      => $bundle,
+      'field_name'  => $field_name,
+    );
+
+    // Delete the field widget storage records on update, since something could
+    // have been changed or added.
+    if ($op == FIELD_WIDGET_SQL_STORAGE_UPDATE) {
+      field_widget_sql_storage_delete($info['name'], $records);
+    }
+    $field = field_info_field($field_name);
+
+    // Iterate through the entities submitted data.
+    foreach (field_get_items($entity_type, $entity, $field_name) as $delta => $item) {
+
+      // The parent field is empty then we don't need to save the widget data.
+      if (module_invoke($field['module'], 'field_is_empty', $item, $field)) {
+        continue;
+      }
+      $records['delta'] = $delta;
+      $records = array_merge($records, array_intersect_key($item, $info['fields']));
+
+      field_widget_sql_storage_save($info['name'], $records);
+    }
+  }
+}
+
+/**
+ * Clear the field widget SQL storage cache data.
+ */
+function field_widget_sql_storage_clear_cache() {
+  cache_clear_all('field_widget_sql_storage_schemas', 'cache_field');
+}
+
+/**
+ * Instantiate the field widget SQL storage entity.
+ *
+ * @param $entity
+ *   An entity object.
+ * @param $entity_type
+ *   The entity object type.
+ *
+ * @return Object
+ *   An instance of the storage entity object.
+ */
+function field_widget_sql_storage_entity($entity, $entity_type) {
+  if (!is_object($entity) || !isset($entity_type)) {
+    return;
+  }
+
+  return new FieldWidgetSqlStorageEntity($entity, $entity_type);
+}
+
+/**
+ * Instantiate the field widget SQL storage database.
+ *
+ * @param $table
+ *   The database table name.
+ * @param $records
+ *   An array of the database records.
+ *
+ * @return Object
+ *   An instance of the storage database object.
+ */
+function field_widget_sql_storage_database($table, $records) {
+  if (!isset($table) || !is_array($records)) {
+    return;
+  }
+
+  return new FieldWidgetSqlStorageDatabase($table, $records);
+}
+
+/**
+ * Save and update the database records for a given table.
+ *
+ * @param  $table
+ *   The schema table name.
+ * @param $records
+ *   An array of the database records.
+ */
+function field_widget_sql_storage_save($table, $records) {
+  $database = field_widget_sql_storage_database($table, $records);
+  return $database->save();
+}
+
+/**
+ * Delete the field widget storage records.
+ *
+ * @param $table
+ *   The schema table name.
+ * @param $records
+ *   An associative array of conditions. The structure of the array:
+ *   - Key: The table field name.
+ *   - Value: The value that needs to be matched.
+ */
+function field_widget_sql_storage_delete($table, $records) {
+  $database = field_widget_sql_storage_database($table, $records);
+  return $database->delete();
+}
+
+/**
+ * Retrieve a single record from the field widget storage table.
+ *
+ * @param $table
+ *   The schema table name.
+ * @param $records
+ *   An array of the fields you want returned.
+ * @param $conditions
+ *   An associative array of conditions. The structure of the array:
+ *   - Key: The table field name.
+ *   - Value: The value that needs to be matched.
+ * @param $fetch_style
+ *   The PDO fetch style you want the rows returned as.
+ *   Default: PDO::FETCH_ASSOC
+ *
+ * @return array|object
+ *   A single record from the field widget storage.
+ */
+function field_widget_sql_storage_retrieve($table, $records = array(), $conditions = array(), $fetch_style = PDO::FETCH_ASSOC) {
+  $database = field_widget_sql_storage_database($table, $records);
+  return $database->retrieve($conditions, $fetch_style);
+}
+
+/**
+ * Retrieve all record from the field widget storage table.
+ *
+ * @param $table
+ *   The schema table name.
+ * @param $records
+ *   An array of the fields you want returned.
+ * @param $conditions
+ *   An associative array of conditions. The structure of the array:
+ *   - Key: The table field name.
+ *   - Value: The value that needs to be matched.
+ * @param $column_index
+ *   A column that you want to key the array by.
+ * @param $fetch_style
+ *   The PDO fetch style you want the rows returned as.
+ *
+ * @return array|object
+ *   All the records from the field widget storage.
+ */
+function field_widget_sql_storage_retrieve_all($table, $records = array(), $conditions = array(), $column_index = NULL, $fetch_style = PDO::FETCH_ASSOC) {
+  $database = field_widget_sql_storage_database($table, $records);
+  return $database->retrieveAll($conditions, $column_index, $fetch_style);
+}
+
+/**
+ * Retrieve all the field widgets schema.
+ *
+ * @return array
+ *   An array of the field widgets schema.
+ */
+function field_widget_sql_storage_get_widget_schema() {
+  $cid = 'field_widget_sql_storage_schemas';
+  $schemas = ($cached = cache_get($cid, 'cache_field')) ? $cached->data : array();
+
+  if (empty($schemas)) {
+    $results = field_widget_sql_storage_retrieve_all(
+      'field_widget_storage', array(), array(), 'module');
+
+    foreach ($results as $module_name => $info) {
+      $schemas[$module_name] = drupal_get_schema($info['name']);
+    }
+    cache_set($cid, $schemas, 'cache_field', CACHE_PERMANENT);
+  }
+
+  return $schemas;
+}
+
+/**
+ * Retrieve the field widget schema by module.
+ *
+ * @param $module
+ *   The module name.
+ *
+ * @return array
+ *   An array of the field widget storage configuration for the given module.
+ */
+function field_widget_sql_storage_get_widget_schema_by_module($module) {
+  $schemas = field_widget_sql_storage_get_widget_schema();
+  if (!isset($module) || !isset($schemas[$module])) {
+    return;
+  }
+
+  return $schemas[$module];
+}
+
+/**
+ * Build the field widget SQL storage schema.
+ *
+ * @param $widget_schema
+ *   An array of the widget schema.
+ *
+ * @return array
+ *   An array of the unique widget schema for the dependent modules.
+ */
+function field_widget_sql_storage_build_widget_schema($widget_schema) {
+  if (!is_array($widget_schema)) {
+    return;
+  }
+  $schema_info = field_widget_sql_storage_widget_schema_info();
+
+  $schema = array();
+  foreach ($widget_schema as $table => $info) {
+    $schema[$table] = array(
+      'field_widget_storage' => TRUE,
+    ) + drupal_array_merge_deep($schema_info, $info);
+  }
+
+  return $schema;
+}
+
+/**
+ * Define the field widget SQL storage schema.
+ *
+ * @return array
+ *   An array of the default schema that is needed for any widget that is using
+ *   the field widget SQL storage API.
+ */
+function field_widget_sql_storage_widget_schema_info() {
+  $schema = array(
+    'description' => 'Stores the field widget data.',
+    'fields' => array(
+      'entity_type' => array(
+        'description' => 'The entity type.',
+        'type' => 'varchar',
+        'length' => '128',
+        'not null' => TRUE,
+      ),
+      'bundle' => array(
+        'description' => 'The entity bundle.',
+        'type' => 'varchar',
+        'length' => '128',
+        'not null' => TRUE,
+      ),
+      'entity_id' => array(
+        'description' => 'The entity ID.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'revision_id' => array(
+        'description' => 'The entity revision ID.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'delta' => array(
+        'description' => 'The entity field delta index.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'field_name' => array(
+        'description' => 'The entity field name.',
+        'type' => 'varchar',
+        'length' => '32',
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array(
+      'entity_type', 'bundle', 'entity_id', 'revision_id', 'delta', 'field_name',
+    ),
+  );
+
+  return $schema;
+}
