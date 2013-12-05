@@ -164,6 +164,13 @@ function _field_widget_sql_storage_save($entity_type, $entity, $op) {
 
   // Iterate through the fields that widget storage is accountable for.
   foreach ($entity_info->getFieldsWidgetStorage() as $field_name => $info) {
+
+    $items = field_get_items($entity_type, $entity, $field_name);
+
+    // Bail out if the entity has no field items.
+    if (!is_array($items)) {
+      continue;
+    }
     $records = array(
       'entity_id'   => $entity_id,
       'revision_id' => $revision_id,
@@ -180,7 +187,7 @@ function _field_widget_sql_storage_save($entity_type, $entity, $op) {
     $field = field_info_field($field_name);
 
     // Iterate through the entities submitted data.
-    foreach (field_get_items($entity_type, $entity, $field_name) as $delta => $item) {
+    foreach ($items as $delta => $item) {
 
       // The parent field is empty then we don't need to save the widget data.
       if (module_invoke($field['module'], 'field_is_empty', $item, $field)) {
@@ -413,7 +420,7 @@ function field_widget_sql_storage_widget_schema_info() {
         'description' => 'The entity revision ID.',
         'type' => 'int',
         'unsigned' => TRUE,
-        'not null' => TRUE,
+        'not null' => FALSE,
       ),
       'delta' => array(
         'description' => 'The entity field delta index.',
@@ -429,7 +436,7 @@ function field_widget_sql_storage_widget_schema_info() {
       ),
     ),
     'primary key' => array(
-      'entity_type', 'bundle', 'entity_id', 'revision_id', 'delta', 'field_name',
+      'entity_type', 'bundle', 'entity_id', 'delta', 'field_name',
     ),
   );
 
