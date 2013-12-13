@@ -420,7 +420,7 @@ function field_widget_sql_storage_widget_schema_info() {
         'description' => 'The entity revision ID.',
         'type' => 'int',
         'unsigned' => TRUE,
-        'not null' => FALSE,
+        'not null' => TRUE,
       ),
       'delta' => array(
         'description' => 'The entity field delta index.',
@@ -436,7 +436,7 @@ function field_widget_sql_storage_widget_schema_info() {
       ),
     ),
     'primary key' => array(
-      'entity_type', 'bundle', 'entity_id', 'delta', 'field_name',
+      'entity_type', 'bundle', 'entity_id', 'revision_id', 'delta', 'field_name',
     ),
   );
 
