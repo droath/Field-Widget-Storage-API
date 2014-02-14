@@ -240,7 +240,7 @@ function field_widget_sql_storage_entity($entity, $entity_type) {
  */
 function field_widget_sql_storage_database($table, $records) {
   if (!isset($table) || !is_array($records)) {
-    return;
+    return new stdClass();
   }
 
   return new FieldWidgetSqlStorageDatabase($table, $records);
@@ -256,6 +256,12 @@ function field_widget_sql_storage_database($table, $records) {
  */
 function field_widget_sql_storage_save($table, $records) {
   $database = field_widget_sql_storage_database($table, $records);
+
+  // Bail out if the database save method doesn't exist.
+  if (!method_exists($database, 'save')) {
+    return;
+  }
+
   return $database->save();
 }
 
@@ -271,6 +277,12 @@ function field_widget_sql_storage_save($table, $records) {
  */
 function field_widget_sql_storage_delete($table, $records) {
   $database = field_widget_sql_storage_database($table, $records);
+
+  // Bail out if the database delete method doesn't exist.
+  if (!method_exists($database, 'delete')) {
+    return;
+  }
+
   return $database->delete();
 }
 
@@ -294,6 +306,12 @@ function field_widget_sql_storage_delete($table, $records) {
  */
 function field_widget_sql_storage_retrieve($table, $records = array(), $conditions = array(), $fetch_style = PDO::FETCH_ASSOC) {
   $database = field_widget_sql_storage_database($table, $records);
+
+  // Bail out if the database retrieve method doesn't exist.
+  if (!method_exists($database, 'retrieve')) {
+    return;
+  }
+
   return $database->retrieve($conditions, $fetch_style);
 }
 
@@ -318,6 +336,12 @@ function field_widget_sql_storage_retrieve($table, $records = array(), $conditio
  */
 function field_widget_sql_storage_retrieve_all($table, $records = array(), $conditions = array(), $column_index = NULL, $fetch_style = PDO::FETCH_ASSOC) {
   $database = field_widget_sql_storage_database($table, $records);
+
+  // Bail out if the database retrieveAll method doesn't exist.
+  if (!method_exists($database, 'retrieveAll')) {
+    return;
+  }
+
   return $database->retrieveAll($conditions, $column_index, $fetch_style);
 }
 
