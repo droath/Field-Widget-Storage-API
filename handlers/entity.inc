@@ -98,7 +98,9 @@ class FieldWidgetSqlStorageEntity {
    *   The entity revision ID.
    */
   public function getRevisionId() {
-    return $this->revisionId;
+    // If the entity doesn't support revisions; then set revision id to the
+    // entity id.
+    return isset($this->revisionId) ? $this->revisionId : $this->getEntityId();
   }
 
   /**
