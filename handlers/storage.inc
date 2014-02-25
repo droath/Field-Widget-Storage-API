@@ -34,8 +34,9 @@ class FieldWidgetSqlStorageDatabase {
 
     // Serialize the fields record if it has set the serialized flag.
     foreach ($this->getFields() as $field_name => $info) {
-      if (isset($info['serialized']) && $info['serialized']) {
-        $records[$field_name] = serialize($records[$field_name]);
+      if (isset($records[$field_name]) &&
+        (isset($info['serialized']) && $info['serialized'])) {
+          $records[$field_name] = serialize($records[$field_name]);
       }
     }
 
